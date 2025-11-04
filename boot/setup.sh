@@ -57,6 +57,34 @@ function manta_setup_redis {
     svcadm enable redis
 }
 
+function manta_setup_session_secret {
+    echo "Configuring SESSION_SECRET_KEY for mahi service"
+    
+    # Check if SESSION_SECRET_KEY is already configured in SAPI
+    local current_secret=""
+    current_secret=$(mdata-get sdc:application_metadata.SESSION_SECRET_KEY 2>/dev/null || true)
+    
+    if [[ -z "$current_secret" ]]; then
+        echo "Generating new SESSION_SECRET_KEY"
+        local secret_key=""
+        secret_key=$($SVC_ROOT/boot/scripts/generate-session-secret.js)
+        
+        if [[ -z "$secret_key" ]]; then
+            fatal "Failed to generate session secret key"
+        fi
+        
+        echo "Setting SESSION_SECRET_KEY in SAPI application metadata"
+        if ! $SVC_ROOT/boot/scripts/set-sapi-metadata.sh SESSION_SECRET_KEY "$secret_key"; then
+            echo "Warning: Failed to set SESSION_SECRET_KEY in SAPI" >&2
+            echo "This may require manual configuration" >&2
+        fi
+        
+        echo "SESSION_SECRET_KEY configured successfully"
+    else
+        echo "SESSION_SECRET_KEY already configured, skipping generation"
+    fi
+}
+
 function manta_setup_auth {
     svccfg import $SVC_ROOT/smf/manifests/mahi.xml
     svcadm enable mahi
@@ -98,6 +126,9 @@ if [[ ${FLAVOR} == "manta" ]]; then
     echo "Adding local manifest directories"
     manta_add_manifest_dir "/opt/smartdc/mahi"
 
+    echo "Setting up session secret for JWT tokens"
+    manta_setup_session_secret
+
     # set up log rotation for mahiv2 first so logadm rotates logs properly
     manta_add_logadm_entry "mahi-replicator"
     manta_add_logadm_entry "mahi-server"
@@ -128,6 +159,9 @@ else # ${FLAVOR} == "sdc"
 
     echo "Installing auth redis"
     sdc_setup_redis
+
+    echo "Setting up session secret for JWT tokens"
+    manta_setup_session_secret
 
     # add log rotation entries for mahi
     sdc_log_rotation_add mahi-replicator /var/svc/log/*mahi-replicator*.log 1g
